@@ -1,113 +1,105 @@
 package com.picbite.app
 
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import java.time.Instant
-import java.time.LocalTime
-import java.time.ZoneId
 import kotlin.math.roundToInt
+import java.util.Locale
 
-/** Формат полностью совместим с экспортом PWA-версии (calories-YYYY-MM-DD.json). */
-val AppJson = Json {
-    ignoreUnknownKeys = true
-    coerceInputValues = true
-    encodeDefaults = true
-}
-
-/** Пищевая ценность на b.g граммов (обычно 100). */
 @Serializable
 data class Base(
-    val g: Double = 100.0,
-    val k: Double = 0.0,
-    val p: Double = 0.0,
-    val f: Double = 0.0,
-    val c: Double = 0.0,
+    val k: Double = 0.0, // Ккал
+    val p: Double = 0.0, // Белки
+    val f: Double = 0.0, // Жиры
+    val c: Double = 0.0  // Углеводы
 )
 
 @Serializable
 data class Item(
-    val name: String = "?",
-    val g: Double = 100.0,
-    val b: Base = Base(),
+    val name: String,
+    val g: Double, // граммы
+    val b: Base    // БЖУ на 100г
 )
 
 @Serializable
 data class Entry(
-    val id: Long = 0,
-    val day: String = "",
-    val meal: String = "",
-    val dish: String = "",
-    val items: List<Item> = emptyList(),
-    val thumb: String = "",
+    val id: String,
+    val day: String,
+    val meal: String,
+    val dish: String,
+    val items: List<Item>
 )
 
 @Serializable
 data class Fav(
-    val id: Long = 0,
-    val dish: String = "",
-    val items: List<Item> = emptyList(),
-    val thumb: String = "",
-)
-
-/** Продукт по штрихкоду, значения на 100 г. s — размер порции, m=1 — введён вручную. */
-@Serializable
-data class BcEntry(
-    val n: String = "",
-    val k: Double = 0.0,
-    val p: Double = 0.0,
-    val f: Double = 0.0,
-    val c: Double = 0.0,
-    val s: Double = 100.0,
-    val m: Int = 0,
+    val id: String,
+    val dish: String,
+    val items: List<Item>
 )
 
 @Serializable
 data class AppData(
     val entries: List<Entry> = emptyList(),
     val favs: List<Fav> = emptyList(),
-    val goal: Double = 0.0,
+    val goal: Double = 2000.0,
     val url: String = "",
     val token: String = "",
-    val lastBackup: Long = 0,
     val theme: String = "auto",
-    val pal: String = "sun",
-    val cust: String = "#e0510b",
-    val barcodes: Map<String, BcEntry> = emptyMap(),
+    val lastBackup: Long = 0L
 )
 
-val MEALS = listOf("b" to "Завтрак", "l" to "Обед", "d" to "Ужин", "s" to "Перекус")
-
-fun mealByHour(h: Int) = when {
-    h < 11 -> "b"
-    h < 16 -> "l"
-    h < 21 -> "d"
-    else -> "s"
-}
-
-fun autoMeal(): String = mealByHour(LocalTime.now().hour)
-
-fun Entry.mealKey(): String = meal.ifEmpty {
-    val ms = if (id > 0) id else System.currentTimeMillis()
-    mealByHour(Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).hour)
-}
-
-data class Tot(val k: Double = 0.0, val p: Double = 0.0, val f: Double = 0.0, val c: Double = 0.0)
-
-private fun Item.part(v: Double) = if (b.g > 0) v * g / b.g else v
-
-fun Item.kcal() = part(b.k)
-
-fun List<Item>.tot() = Tot(
-    k = sumOf { it.part(it.b.k) },
-    p = sumOf { it.part(it.b.p) },
-    f = sumOf { it.part(it.b.f) },
-    c = sumOf { it.part(it.b.c) },
+// Модели для диалогов
+data class Pending(
+    val dish: String,
+    val comment: String,
+    val items: List<Item>,
+    val meal: String,
+    val eid: String? = null
 )
 
-fun Tot.bzu() = "Б ${p.roundToInt()} · Ж ${f.roundToInt()} · У ${c.roundToInt()}"
+// Класс для предзаполнения данных (добавлен, чтобы исправить ошибку)
+data class PreManual(
+    val n: String = "", // Название
+    val k: Double = 0.0,
+    val p: Double = 0.0,
+    val f: Double = 0.0,
+    val c: Double = 0.0
+)
 
-fun fmt(d: Double): String =
-    if (d % 1.0 == 0.0) d.toLong().toString() else (Math.round(d * 10) / 10.0).toString()
+// Обновленный класс ManualBc с нужными полями
+data class ManualBc(
+    val code: String,
+    val title: String,
+    val pre: PreManual? = null
+)
 
-fun num(v: String): Double =
-    v.replace(',', '.').trim().toDoubleOrNull()?.takeIf { it.isFinite() } ?: 0.0
+data class UiEvent(
+    val text: String,
+    val actionLabel: String? = null,
+    val action: (() -> Unit)? = null
+)
+
+// Вспомогательные функции (расширения)
+fun List<Item>.tot(): Base {
+    var k = 0.0; var p = 0.0; var f = 0.0; var c = 0.0
+    for (item in this) {
+        val ratio = item.g / 100.0
+        k += item.b.k * ratio
+        p += item.b.p * ratio
+        f += item.b.f * ratio
+        c += item.b.c * ratio
+    }
+    return Base(k, p, f, c)
+}
+
+fun Item.kcal(): Double = (b.k * (g / 100.0))
+
+fun Base.bzu(): String = "Б: ${p.roundToInt()} / Ж: ${f.roundToInt()} / У: ${c.roundToInt()}"
+
+fun Entry.mealKey(): String = meal
+
+// Форматирование чисел (2 знака после запятой, но без лишних нулей)
+fun fmt(d: Double): String {
+    return if (d % 1.0 == 0.0) d.toInt().toString() else String.format(Locale.US, "%.1f", d)
+}
+
+// Парсинг чисел из строки
+fun num(s: String): Double = s.replace(",", ".").toDoubleOrNull() ?: 0.0
