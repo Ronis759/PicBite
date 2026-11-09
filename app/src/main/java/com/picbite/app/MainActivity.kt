@@ -12,7 +12,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -41,6 +44,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -66,6 +71,9 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -113,12 +121,16 @@ fun PicBiteTheme(mode: String, content: @Composable () -> Unit) {
             primary = Color(0xFFFF7A45), onPrimary = Color(0xFF2B1000),
             background = Color(0xFF17120F), surface = Color(0xFF241C18),
             onBackground = Color(0xFFF3E9E2), onSurface = Color(0xFFF3E9E2),
+            secondaryContainer = Color(0xFF4A2A1B), onSecondaryContainer = Color(0xFFFFDBCB),
+            surfaceContainer = Color(0xFF241C18),
         )
     } else {
         lightColorScheme(
             primary = Color(0xFFE0510B), onPrimary = Color.White,
             background = Color(0xFFFFF6EE), surface = Color.White,
             onBackground = Color(0xFF2A1A10), onSurface = Color(0xFF2A1A10),
+            secondaryContainer = Color(0xFFFFDCCB), onSecondaryContainer = Color(0xFF5A1F00),
+            surfaceContainer = Color.White,
         )
     }
     MaterialTheme(colorScheme = scheme, content = content)
@@ -131,8 +143,9 @@ private fun muted() = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
 fun Panel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         content = content,
     )
 }
@@ -141,8 +154,10 @@ fun Panel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> 
 
 @Composable
 fun App(vm: AppVM) {
-    var screen by rememberSaveable { mutableStateOf("main") }
+    var screen by rememberSaveable { mutableStateOf("diary") }
     val snack = remember { SnackbarHostState() }
+
+    BackHandler(enabled = screen != "diary") { screen = "diary" }
 
     LaunchedEffect(Unit) {
         vm.events.collect { ev ->
@@ -151,10 +166,31 @@ fun App(vm: AppVM) {
         }
     }
 
-    Scaffold(snackbarHost = { SnackbarHost(snack) }) { pad ->
+    Scaffold(
+        snackbarHost = { SnackbarHost(snack) },
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                listOf(
+                    Triple("diary", "📖", "Дневник"),
+                    Triple("calendar", "📅", "Календарь"),
+                    Triple("settings", "⚙️", "Настройки"),
+                ).forEach { (key, icon, label) ->
+                    NavigationBarItem(
+                        selected = screen == key,
+                        onClick = { screen = key },
+                        icon = { Text(icon, style = MaterialTheme.typography.titleLarge) },
+                        label = { Text(label) },
+                    )
+                }
+            }
+        },
+    ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad)) {
-            if (screen == "main") MainScreen(vm) { screen = "settings" }
-            else SettingsScreen(vm) { screen = "main" }
+            when (screen) {
+                "calendar" -> CalendarScreen(vm) { screen = "diary" }
+                "settings" -> SettingsScreen(vm)
+                else -> MainScreen(vm)
+            }
         }
     }
 
@@ -164,10 +200,15 @@ fun App(vm: AppVM) {
 
 // ======================= Главный экран =======================
 
-private val DAY_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMMM, EEE", Locale.forLanguageTag("ru"))
+val DAY_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMMM, EEE", Locale.forLanguageTag("ru"))
+
+val MEAL_EMOJI = mapOf("b" to "🍳", "l" to "🍲", "d" to "🍽", "s" to "🍎")
+private val C_PROT = Color(0xFF3F8EF5)
+private val C_FAT = Color(0xFFF5A623)
+private val C_CARB = Color(0xFF43A047)
 
 @Composable
-fun MainScreen(vm: AppVM, openSettings: () -> Unit) {
+fun MainScreen(vm: AppVM) {
     val d by vm.data.collectAsState()
     val ctx = LocalContext.current
     var note by rememberSaveable { mutableStateOf("") }
@@ -196,6 +237,7 @@ fun MainScreen(vm: AppVM, openSettings: () -> Unit) {
     val entries = d.entries.filter { it.day == dayKey }
     val total = entries.flatMap { it.items }.tot()
     val isToday = vm.day == LocalDate.now()
+    val byDay = remember(d.entries) { d.entries.dayTotals() }
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -204,30 +246,43 @@ fun MainScreen(vm: AppVM, openSettings: () -> Unit) {
     ) {
         item(key = "top") {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("🥗 PicBite", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                TextButton(onClick = openSettings) { Text("⚙️ Настройки") }
+                Column(Modifier.weight(1f)) {
+                    Text("🥗 PicBite", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isToday) "Сегодня · " + vm.day.format(DAY_FMT) else vm.day.format(DAY_FMT),
+                        color = muted(), style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                if (!isToday) TextButton(onClick = { vm.goToday() }) { Text("К сегодня") }
             }
         }
+
+        item(key = "week") { WeekStrip(vm, byDay, d.goal) }
 
         item(key = "summary") {
             Panel(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { vm.shiftDay(-1) }) { Text("‹") }
-                        TextButton(onClick = { vm.goToday() }, modifier = Modifier.weight(1f)) {
-                            Text(if (isToday) "Сегодня" else vm.day.format(DAY_FMT), fontWeight = FontWeight.SemiBold)
-                        }
-                        TextButton(onClick = { vm.shiftDay(1) }) { Text("›") }
+                        TextButton(onClick = { vm.shiftDay(-1) }) { Text("‹", style = MaterialTheme.typography.titleLarge) }
+                        Text(
+                            if (isToday) "Сегодня" else vm.day.format(DAY_FMT),
+                            Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold,
+                        )
+                        TextButton(onClick = { vm.shiftDay(1) }) { Text("›", style = MaterialTheme.typography.titleLarge) }
                     }
                     Ring(total.k, d.goal)
-                    Text(total.bzu(), color = muted(), style = MaterialTheme.typography.bodyMedium)
                     if (d.goal > 0) {
                         val left = d.goal - total.k
                         Text(
                             if (left >= 0) "Осталось ${left.roundToInt()} ккал" else "Перебор на ${(-left).roundToInt()} ккал",
-                            color = if (left >= 0) muted() else Color(0xFFD32F2F),
-                            style = MaterialTheme.typography.bodySmall,
+                            color = if (left >= 0) muted() else ColorOver,
+                            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
                         )
+                    }
+                    Row(Modifier.fillMaxWidth().padding(top = 14.dp)) {
+                        MacroCell("Белки", total.p, C_PROT, Modifier.weight(1f))
+                        MacroCell("Жиры", total.f, C_FAT, Modifier.weight(1f))
+                        MacroCell("Углеводы", total.c, C_CARB, Modifier.weight(1f))
                     }
                 }
             }
@@ -302,7 +357,7 @@ fun MainScreen(vm: AppVM, openSettings: () -> Unit) {
             if (list.isNotEmpty()) {
                 item(key = "h_$key") {
                     Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                        Text("$label · ${list.size}", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                        Text("${MEAL_EMOJI[key]} $label · ${list.size}", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                         Text("${list.flatMap { it.items }.tot().k.roundToInt()} ккал", color = muted())
                     }
                 }
@@ -322,14 +377,24 @@ fun MainScreen(vm: AppVM, openSettings: () -> Unit) {
 }
 
 @Composable
+fun MacroCell(label: String, grams: Double, color: Color, modifier: Modifier = Modifier) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(width = 28.dp, height = 4.dp).clip(CircleShape).background(color))
+        Text("${grams.roundToInt()} г", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+        Text(label, color = muted(), style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
 fun Ring(eaten: Double, goal: Double) {
     val over = goal > 0 && eaten > goal
-    val frac = if (goal > 0) (eaten / goal).toFloat().coerceIn(0f, 1f) else 0f
-    val track = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
-    val col = if (over) Color(0xFFD32F2F) else MaterialTheme.colorScheme.primary
-    Box(Modifier.size(160.dp).padding(8.dp), contentAlignment = Alignment.Center) {
+    val target = if (goal > 0) (eaten / goal).toFloat().coerceIn(0f, 1f) else 0f
+    val frac by animateFloatAsState(target, label = "ring")
+    val track = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+    val col = if (over) ColorOver else MaterialTheme.colorScheme.primary
+    Box(Modifier.size(190.dp).padding(8.dp), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
-            val w = 16.dp.toPx()
+            val w = 18.dp.toPx()
             val s = Size(size.width - w, size.height - w)
             val tl = Offset(w / 2, w / 2)
             drawArc(track, 0f, 360f, false, topLeft = tl, size = s, style = Stroke(w, cap = StrokeCap.Round))
@@ -338,7 +403,7 @@ fun Ring(eaten: Double, goal: Double) {
             }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(eaten.roundToInt().toString(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Text(eaten.roundToInt().toString(), style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
             Text(if (goal > 0) "из ${goal.roundToInt()} ккал" else "ккал", color = muted(), style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -508,8 +573,7 @@ fun BarcodeDialog(vm: AppVM, onDismiss: () -> Unit) {
 // ======================= Настройки =======================
 
 @Composable
-fun SettingsScreen(vm: AppVM, back: () -> Unit) {
-    BackHandler(onBack = back)
+fun SettingsScreen(vm: AppVM) {
     val d by vm.data.collectAsState()
     val ctx = LocalContext.current
     var url by remember { mutableStateOf(d.url) }
@@ -541,10 +605,7 @@ fun SettingsScreen(vm: AppVM, back: () -> Unit) {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = back) { Text("← Назад") }
-            Text("Настройки", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        }
+        Text("Настройки", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
 
         Panel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
