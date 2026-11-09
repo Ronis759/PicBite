@@ -24,29 +24,40 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -56,8 +67,11 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -72,8 +86,6 @@ import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -83,13 +95,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.google.mlkit.vision.barcode.common.Barcode as MlBarcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import java.io.File
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -154,10 +169,11 @@ fun Panel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> 
 
 @Composable
 fun App(vm: AppVM) {
-    var screen by rememberSaveable { mutableStateOf("diary") }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showDatePicker by rememberSaveable { mutableStateOf(false) }
     val snack = remember { SnackbarHostState() }
 
-    BackHandler(enabled = screen != "diary") { screen = "diary" }
+    BackHandler(enabled = showSettings) { showSettings = false }
 
     LaunchedEffect(Unit) {
         vm.events.collect { ev ->
@@ -168,29 +184,63 @@ fun App(vm: AppVM) {
 
     Scaffold(
         snackbarHost = { SnackbarHost(snack) },
-        bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                listOf(
-                    Triple("diary", "📖", "Дневник"),
-                    Triple("calendar", "📅", "Календарь"),
-                    Triple("settings", "⚙️", "Настройки"),
-                ).forEach { (key, icon, label) ->
-                    NavigationBarItem(
-                        selected = screen == key,
-                        onClick = { screen = key },
-                        icon = { Text(icon, style = MaterialTheme.typography.titleLarge) },
-                        label = { Text(label) },
-                    )
+        topBar = {
+            TopAppBar(
+                title = { 
+                    Text(
+                        if (showSettings) "Настройки" else "🥗 PicBite", 
+                        fontWeight = FontWeight.Bold
+                    ) 
+                },
+                navigationIcon = {
+                    if (showSettings) {
+                        IconButton(onClick = { showSettings = false }) {
+                            Icon(Icons.Default.Close, contentDescription = "Назад")
+                        }
+                    }
+                },
+                actions = {
+                    if (!showSettings) {
+                        IconButton(onClick = { showDatePicker = true }) {
+                            Icon(Icons.Default.DateRange, contentDescription = "Календарь")
+                        }
+                        IconButton(onClick = { showSettings = true }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Настройки")
+                        }
+                    }
                 }
-            }
-        },
+            )
+        }
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad)) {
-            when (screen) {
-                "calendar" -> CalendarScreen(vm) { screen = "diary" }
-                "settings" -> SettingsScreen(vm)
-                else -> MainScreen(vm)
+            if (showSettings) {
+                SettingsScreen(vm)
+            } else {
+                MainScreen(vm)
             }
+        }
+    }
+
+    // Диалог календаря
+    if (showDatePicker) {
+        val initialMillis = vm.day.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let {
+                        val date = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+                        vm.setDay(date) // ВАЖНО: добавьте этот метод в AppVM
+                    }
+                    showDatePicker = false
+                }) { Text("ОК") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Отмена") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
         }
     }
 
@@ -198,10 +248,9 @@ fun App(vm: AppVM) {
     vm.manual?.let { ManualDialog(vm, it) }
 }
 
-// ======================= Главный экран =======================
+// ======================= Главный экран (Дашборд без прокрутки) =======================
 
 val DAY_FMT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMMM, EEE", Locale.forLanguageTag("ru"))
-
 val MEAL_EMOJI = mapOf("b" to "🍳", "l" to "🍲", "d" to "🍽", "s" to "🍎")
 private val C_PROT = Color(0xFF3F8EF5)
 private val C_FAT = Color(0xFFF5A623)
@@ -214,7 +263,7 @@ fun MainScreen(vm: AppVM) {
     var note by rememberSaveable { mutableStateOf("") }
     var camUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var showBc by remember { mutableStateOf(false) }
-    var favEdit by remember { mutableStateOf(false) }
+    var selectedMeal by remember { mutableStateOf<String?>(null) }
 
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         if (ok) camUri?.let { vm.analyze(it, note) }
@@ -237,137 +286,142 @@ fun MainScreen(vm: AppVM) {
     val entries = d.entries.filter { it.day == dayKey }
     val total = entries.flatMap { it.items }.tot()
     val isToday = vm.day == LocalDate.now()
-    val byDay = remember(d.entries) { d.entries.dayTotals() }
 
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item(key = "top") {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("🥗 PicBite", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        // 1. Строка с датой
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (isToday) "Сегодня · " + vm.day.format(DAY_FMT) else vm.day.format(DAY_FMT),
+                color = muted(), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium
+            )
+            Spacer(Modifier.weight(1f))
+            if (!isToday) {
+                TextButton(onClick = { vm.goToday() }, contentPadding = PaddingValues(0.dp)) { Text("К сегодня") }
+            }
+        }
+
+        // 2. Кольцо калорий и БЖУ (занимает чуть больше половины)
+        Panel(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1.1f)
+        ) {
+            Column(
+                Modifier.fillMaxSize().padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Ring(total.k, d.goal)
+                if (d.goal > 0) {
+                    val left = d.goal - total.k
                     Text(
-                        if (isToday) "Сегодня · " + vm.day.format(DAY_FMT) else vm.day.format(DAY_FMT),
-                        color = muted(), style = MaterialTheme.typography.bodyMedium,
+                        if (left >= 0) "Осталось ${left.roundToInt()} ккал" else "Перебор на ${(-left).roundToInt()} ккал",
+                        color = if (left >= 0) muted() else Color(0xFFE53935), // Цвет перебора
+                        style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                 }
-                if (!isToday) TextButton(onClick = { vm.goToday() }) { Text("К сегодня") }
-            }
-        }
-
-        item(key = "week") { WeekStrip(vm, byDay, d.goal) }
-
-        item(key = "summary") {
-            Panel(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { vm.shiftDay(-1) }) { Text("‹", style = MaterialTheme.typography.titleLarge) }
-                        Text(
-                            if (isToday) "Сегодня" else vm.day.format(DAY_FMT),
-                            Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold,
-                        )
-                        TextButton(onClick = { vm.shiftDay(1) }) { Text("›", style = MaterialTheme.typography.titleLarge) }
-                    }
-                    Ring(total.k, d.goal)
-                    if (d.goal > 0) {
-                        val left = d.goal - total.k
-                        Text(
-                            if (left >= 0) "Осталось ${left.roundToInt()} ккал" else "Перебор на ${(-left).roundToInt()} ккал",
-                            color = if (left >= 0) muted() else ColorOver,
-                            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
-                        )
-                    }
-                    Row(Modifier.fillMaxWidth().padding(top = 14.dp)) {
-                        MacroCell("Белки", total.p, C_PROT, Modifier.weight(1f))
-                        MacroCell("Жиры", total.f, C_FAT, Modifier.weight(1f))
-                        MacroCell("Углеводы", total.c, C_CARB, Modifier.weight(1f))
-                    }
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    MacroCell("Белки", total.p, C_PROT, Modifier.weight(1f))
+                    MacroCell("Жиры", total.f, C_FAT, Modifier.weight(1f))
+                    MacroCell("Углеводы", total.c, C_CARB, Modifier.weight(1f))
                 }
             }
         }
 
-        item(key = "input") {
-            Panel(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = note, onValueChange = { note = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Например: гречка 200 г и две сосиски") },
-                        minLines = 2,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = ::takePhoto, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("📷 Фото") }
-                        OutlinedButton(
-                            onClick = { gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                            enabled = !vm.busy, modifier = Modifier.weight(1f),
-                        ) { Text("🖼 Галерея") }
-                        OutlinedButton(onClick = { showBc = true }, enabled = !vm.busy, modifier = Modifier.weight(1f)) { Text("📦 Код") }
-                    }
-                    Button(
-                        onClick = { vm.analyze(null, note) },
-                        enabled = !vm.busy && note.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("✨ Посчитать по тексту") }
-                    if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if (vm.message.isNotEmpty()) {
-                        Text(
-                            vm.message,
-                            color = if (vm.messageErr) MaterialTheme.colorScheme.error else muted(),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
+        // 3. Ввод (компактный)
+        Panel(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = note, onValueChange = { note = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Описание еды...", style = MaterialTheme.typography.bodySmall) },
+                    minLines = 1,
+                    maxLines = 2,
+                    textStyle = MaterialTheme.typography.bodySmall
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(onClick = ::takePhoto, enabled = !vm.busy, modifier = Modifier.weight(1f), contentPadding = PaddingValues(0.dp)) { Text("📷 Фото", style = MaterialTheme.typography.bodySmall) }
+                    OutlinedButton(
+                        onClick = { gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        enabled = !vm.busy, modifier = Modifier.weight(1f), contentPadding = PaddingValues(0.dp)
+                    ) { Text("🖼 Галерея", style = MaterialTheme.typography.bodySmall) }
+                    OutlinedButton(onClick = { showBc = true }, enabled = !vm.busy, modifier = Modifier.weight(1f), contentPadding = PaddingValues(0.dp)) { Text("📦 Код", style = MaterialTheme.typography.bodySmall) }
+                }
+                Button(
+                    onClick = { vm.analyze(null, note) },
+                    enabled = !vm.busy && note.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(0.dp)
+                ) { Text("✨ Посчитать по тексту", style = MaterialTheme.typography.bodySmall) }
+                if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (vm.message.isNotEmpty()) {
+                    Text(vm.message, color = if (vm.messageErr) MaterialTheme.colorScheme.error else muted(), style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
 
-        if (d.favs.isNotEmpty()) {
-            item(key = "favs") {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("⭐ Избранное", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                        TextButton(onClick = { favEdit = !favEdit }) { Text(if (favEdit) "Готово" else "Изменить") }
-                    }
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        d.favs.forEach { f ->
-                            Panel(Modifier.width(140.dp).clickable { if (!favEdit) vm.addFavToDay(f) }) {
-                                Column(Modifier.padding(12.dp)) {
-                                    Text(f.dish, maxLines = 2, fontWeight = FontWeight.Medium)
-                                    Text("${f.items.tot().k.roundToInt()} ккал", color = muted(), style = MaterialTheme.typography.bodySmall)
-                                    if (favEdit) {
-                                        TextButton(onClick = { vm.removeFav(f.id) }) { Text("✕ Удалить") }
-                                    }
-                                }
-                            }
+        // 4. Приемы пищи (Занимают оставшееся место)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1.5f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            MEALS.forEach { (key, label) ->
+                val list = entries.filter { it.mealKey() == key }
+                val kcal = list.flatMap { it.items }.tot().k.roundToInt()
+                MealSummaryCard(
+                    emoji = MEAL_EMOJI[key] ?: "",
+                    title = label,
+                    kcal = kcal,
+                    modifier = Modifier.weight(1f),
+                    onClick = { selectedMeal = key }
+                )
+            }
+        }
+    }
+
+    // Нижнее модальное окно (BottomSheet) с деталями приема пищи
+    if (selectedMeal != null) {
+        val mealKey = selectedMeal!!
+        val mealLabel = MEALS.find { it.first == mealKey }?.second ?: ""
+        val list = entries.filter { it.mealKey() == mealKey }
+
+        ModalBottomSheet(
+            onDismissRequest = { selectedMeal = null },
+            sheetState = rememberModalBottomSheetState()
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.8f)
+                    .padding(horizontal = 16.dp)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("${MEAL_EMOJI[mealKey]} $mealLabel", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                
+                if (list.isEmpty()) {
+                    Text("Пока пусто. Добавь еду, чтобы она появилась здесь.", color = muted())
+                    Spacer(Modifier.height(32.dp))
+                } else {
+                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(list, key = { it.id }) { e ->
+                            EntryCard(
+                                e,
+                                onEdit = { vm.edit(e); selectedMeal = null },
+                                onFav = { vm.addFav(e.dish, e.items) },
+                                onDel = { vm.delete(e) },
+                            )
                         }
+                        item { Spacer(Modifier.height(16.dp)) }
                     }
-                }
-            }
-        }
-
-        if (entries.isEmpty()) {
-            item(key = "empty") {
-                Text("Пока пусто. Сними блюдо, опиши его текстом или выбери из избранного.", color = muted())
-            }
-        }
-
-        MEALS.forEach { (key, label) ->
-            val list = entries.filter { it.mealKey() == key }
-            if (list.isNotEmpty()) {
-                item(key = "h_$key") {
-                    Row(Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                        Text("${MEAL_EMOJI[key]} $label · ${list.size}", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                        Text("${list.flatMap { it.items }.tot().k.roundToInt()} ккал", color = muted())
-                    }
-                }
-                items(list, key = { it.id }) { e ->
-                    EntryCard(
-                        e,
-                        onEdit = { vm.edit(e) },
-                        onFav = { vm.addFav(e.dish, e.items) },
-                        onDel = { vm.delete(e) },
-                    )
                 }
             }
         }
@@ -377,10 +431,36 @@ fun MainScreen(vm: AppVM) {
 }
 
 @Composable
+fun MealSummaryCard(
+    emoji: String,
+    title: String,
+    kcal: Int,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Panel(modifier = modifier.fillMaxWidth().clickable { onClick() }) {
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(emoji, style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.width(12.dp))
+            Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(
+                if (kcal > 0) "$kcal ккал" else "Добавить",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = if (kcal > 0) MaterialTheme.colorScheme.primary else muted()
+            )
+        }
+    }
+}
+
+@Composable
 fun MacroCell(label: String, grams: Double, color: Color, modifier: Modifier = Modifier) {
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(width = 28.dp, height = 4.dp).clip(CircleShape).background(color))
-        Text("${grams.roundToInt()} г", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+        Box(Modifier.size(width = 24.dp, height = 4.dp).clip(CircleShape).background(color))
+        Text("${grams.roundToInt()} г", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 4.dp))
         Text(label, color = muted(), style = MaterialTheme.typography.bodySmall)
     }
 }
@@ -391,10 +471,10 @@ fun Ring(eaten: Double, goal: Double) {
     val target = if (goal > 0) (eaten / goal).toFloat().coerceIn(0f, 1f) else 0f
     val frac by animateFloatAsState(target, label = "ring")
     val track = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-    val col = if (over) ColorOver else MaterialTheme.colorScheme.primary
-    Box(Modifier.size(190.dp).padding(8.dp), contentAlignment = Alignment.Center) {
+    val col = if (over) Color(0xFFE53935) else MaterialTheme.colorScheme.primary
+    Box(Modifier.size(160.dp).padding(8.dp), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
-            val w = 18.dp.toPx()
+            val w = 16.dp.toPx()
             val s = Size(size.width - w, size.height - w)
             val tl = Offset(w / 2, w / 2)
             drawArc(track, 0f, 360f, false, topLeft = tl, size = s, style = Stroke(w, cap = StrokeCap.Round))
@@ -403,7 +483,7 @@ fun Ring(eaten: Double, goal: Double) {
             }
         }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(eaten.roundToInt().toString(), style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+            Text(eaten.roundToInt().toString(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Text(if (goal > 0) "из ${goal.roundToInt()} ккал" else "ккал", color = muted(), style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -602,11 +682,9 @@ fun SettingsScreen(vm: AppVM) {
     }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Настройки", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-
         Panel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("ИИ-сервер", fontWeight = FontWeight.SemiBold)
@@ -644,7 +722,7 @@ fun SettingsScreen(vm: AppVM) {
                     color = muted(), style = MaterialTheme.typography.bodySmall,
                 )
                 if (d.lastBackup > 0) {
-                    val dt = java.time.Instant.ofEpochMilli(d.lastBackup).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+                    val dt = Instant.ofEpochMilli(d.lastBackup).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
                     Text("Последняя копия: $dt", color = muted(), style = MaterialTheme.typography.bodySmall)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
