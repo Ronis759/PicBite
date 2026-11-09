@@ -94,7 +94,7 @@ class AppVM(app: Application) : AndroidViewModel(app) {
 
     // ---------- день ----------
 
-    fun setDay(d: LocalDate) { day = d }
+    fun selectDay(d: LocalDate) { day = d }
     fun shiftDay(n: Long) { day = day.plusDays(n) }
     fun goToday() { day = LocalDate.now() }
 

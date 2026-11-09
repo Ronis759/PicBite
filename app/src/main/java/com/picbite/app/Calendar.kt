@@ -99,7 +99,7 @@ fun CalendarScreen(vm: AppVM, openDay: () -> Unit) {
                             .replaceFirstChar { it.uppercase() } + " " + month.year,
                         Modifier.weight(1f).clickable {
                             ym = YearMonth.from(today).toString()
-                            vm.setDay(today)
+                            vm.selectDay(today)
                         },
                         textAlign = TextAlign.Center,
                         style = MaterialTheme.typography.titleMedium,
@@ -138,7 +138,7 @@ fun CalendarScreen(vm: AppVM, openDay: () -> Unit) {
                                     selected = date == sel,
                                     isToday = date == today,
                                     modifier = Modifier.weight(1f),
-                                    onClick = { vm.setDay(date) },
+                                    onClick = { vm.selectDay(date) },
                                 )
                             }
                         }
@@ -339,7 +339,7 @@ fun WeekStrip(vm: AppVM, byDay: Map<String, Tot>, goal: Double) {
                 Column(
                     Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
                         .background(if (selected) primary.copy(alpha = 0.14f) else Color.Transparent)
-                        .clickable { vm.setDay(date) }
+                        .clickable { vm.selectDay(date) }
                         .padding(vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
